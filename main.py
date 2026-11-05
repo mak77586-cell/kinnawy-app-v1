@@ -25,11 +25,9 @@ USER_ID = 1  # معرف المستخدم المحلي
 ADMIN_USER = "admin"
 ADMIN_PASS = "123456"
 
-# تحديد مسار قاعدة البيانات تلقائياً
-if os.path.exists("/data"):
+# تحديد مسار قاعدة البيانات بدقة لتجنب قيود الأندرويد
+if os.environ.get("RENDER") or (os.path.exists("/data") and os.access("/data", os.W_OK)):
     DB_PATH = "/data/shop.db"
-elif os.path.exists("/var/data"):
-    DB_PATH = "/var/data/shop.db"
 else:
     DB_PATH = "shop.db"
 
