@@ -179,7 +179,7 @@ def main(page: ft.Page):
                 padding=15,
                 bgcolor="#1e1e1e",
                 border_radius=8,
-                alignment=ft.alignment.center
+                alignment="center"
             ),
             ft.Text("شكراً لاستخدامك خدمات SYRIA NET 💙", size=12, color=ft.Colors.GREY)
         ], tight=True, spacing=10),
@@ -188,7 +188,7 @@ def main(page: ft.Page):
         ]
     )
 
-    # 2. نافذة تنبيه العامة (للأخطاء ونفاد المخزون)
+    # 2. نافذة تنبيه العامة
     alert_msg_text = ft.Text("", size=15)
     
     def close_alert_dialog(e):
@@ -274,7 +274,7 @@ def main(page: ft.Page):
         ]
     )
 
-    # 4. إعداد FilePicker لرفع ملفات الـ PDF (مع دعم بايتات الهاتف)
+    # 4. إعداد FilePicker كـ "خدمة" وتسجيله في page.services للإصدارات الحديثة
     category_dropdown = ft.Dropdown(
         label="اختر الفئة المستهدفة للرفع",
         options=[ft.dropdown.Option(cat) for cat in CATEGORY_PRICES.keys()],
@@ -302,6 +302,7 @@ def main(page: ft.Page):
             page.update()
 
     file_picker = ft.FilePicker(on_result=on_file_picked)
+    page.services.append(file_picker)  # <--- التسجيل الصحيح كخدمة في Flet الحديث
     
     admin_dialog = ft.AlertDialog(
         title=ft.Text("⚙️ لوحة تحكم المشرف - رفع بطاقات PDF"),
@@ -346,13 +347,14 @@ def main(page: ft.Page):
         ]
     )
 
-    # إضافة عناصر الـ Overlay مرة واحدة فقط وبشكل صحيح تماماً لمنع أي أخطاء
-    page.overlay.append(file_picker)
+    # إضافة النوافذ المرئية فقط إلى الـ overlay
     page.overlay.append(deposit_dialog)
     page.overlay.append(card_dialog)
     page.overlay.append(admin_dialog)
     page.overlay.append(login_dialog)
     page.overlay.append(alert_dialog)
+    
+    page.update()
 
     def open_deposit(e):
         status_msg.value = ""
@@ -440,4 +442,4 @@ def main(page: ft.Page):
 
 if __name__ == '__main__':
     init_db()
-    ft.app(target=main)
+    ft.run(main)
