@@ -4,6 +4,7 @@ import asyncio
 import aiohttp
 import re
 from pypdf import PdfReader
+import io
 import flet as ft
 
 # بيانات محفظة شام كاش والـ API
@@ -68,12 +69,13 @@ def get_user_balance():
     conn.close()
     return row[0] if row else 0.0
 
-def import_cards_from_pdf(pdf_path, target_category):
-    if not pdf_path or not os.path.exists(pdf_path):
+def import_cards_from_pdf_bytes(file_bytes, target_category):
+    if not file_bytes:
         return 0
     
     try:
-        reader = PdfReader(pdf_path)
+        pdf_file = io.BytesIO(file_bytes)
+        reader = PdfReader(pdf_file)
         text = ""
         for page in reader.pages:
             extracted = page.extract_text()
@@ -99,7 +101,7 @@ def import_cards_from_pdf(pdf_path, target_category):
         conn.close()
         return added_count
     except Exception as e:
-        print(f"Error reading PDF: {e}")
+        print(f"Error reading PDF bytes: {e}")
         return 0
 
 async def verify_shamcash_transaction(tx_id: str) -> dict:
@@ -135,6 +137,7 @@ def main(page: ft.Page):
     page.vertical_alignment = ft.MainAxisAlignment.START
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.padding = 15
+    page.scroll = ft.ScrollMode.AUTO
 
     current_balance = get_user_balance()
 
@@ -176,7 +179,7 @@ def main(page: ft.Page):
                 padding=15,
                 bgcolor="#1e1e1e",
                 border_radius=8,
-                alignment="center"
+                alignment=ft.alignment.center
             ),
             ft.Text("شكراً لاستخدامك خدمات SYRIA NET 💙", size=12, color=ft.Colors.GREY)
         ], tight=True, spacing=10),
@@ -271,7 +274,7 @@ def main(page: ft.Page):
         ]
     )
 
-    # 4. إعداد FilePicker لرفع ملفات الـ PDF
+    # 4. إعداد FilePicker لرفع ملفات الـ PDF (مع دعم بايتات الهاتف)
     category_dropdown = ft.Dropdown(
         label="اختر الفئة المستهدفة للرفع",
         options=[ft.dropdown.Option(cat) for cat in CATEGORY_PRICES.keys()],
@@ -280,7 +283,7 @@ def main(page: ft.Page):
 
     def on_file_picked(e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
-            file_path = e.files[0].path
+            file_info = e.files[0]
             cat = category_dropdown.value
             if not cat:
                 admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
@@ -288,24 +291,30 @@ def main(page: ft.Page):
                 page.update()
                 return
             
-            added = import_cards_from_pdf(file_path, cat)
-            admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح إلى فئة {cat}!"
-            admin_status_msg.color = ft.Colors.GREEN_400
-            refresh_packages()
+            if file_info.bytes:
+                added = import_cards_from_pdf_bytes(file_info.bytes, cat)
+                admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح إلى فئة {cat}!"
+                admin_status_msg.color = ft.Colors.GREEN_400
+                refresh_packages()
+            else:
+                admin_status_msg.value = "❌ تعذر قراءة محتوى الملف على الجهاز."
+                admin_status_msg.color = ft.Colors.RED_400
             page.update()
 
     file_picker = ft.FilePicker(on_result=on_file_picked)
-    page.overlay.append(file_picker)
     
     admin_dialog = ft.AlertDialog(
         title=ft.Text("⚙️ لوحة تحكم المشرف - رفع بطاقات PDF"),
         content=ft.Column([
-            ft.Text("اختر الفئة ثم اضغط رفع ملف لاختيار ملف الـ PDF:"),
+            ft.Text("اختر الفئة ثم اضغط زر اختيار ملفات الـ PDF:"),
             category_dropdown,
+            ft.FilledButton(
+                "📁 اختيار ملف PDF ورفع", 
+                on_click=lambda e: file_picker.pick_files(with_data=True, allow_multiple=False)
+            ),
             admin_status_msg,
         ], tight=True, spacing=15),
         actions=[
-            ft.FilledButton("📁 اختيار ملف PDF ورفع", on_click=lambda e: file_picker.pick_files(allow_multiple=False)),
             ft.TextButton("إغلاق", on_click=lambda e: setattr(admin_dialog, 'open', False) or page.update()),
         ]
     )
@@ -337,7 +346,7 @@ def main(page: ft.Page):
         ]
     )
 
-    # إضافة كافة العناصر وعنصر الاختيار لـ overlay
+    # إضافة عناصر الـ Overlay مرة واحدة فقط وبشكل صحيح تماماً لمنع أي أخطاء
     page.overlay.append(file_picker)
     page.overlay.append(deposit_dialog)
     page.overlay.append(card_dialog)
@@ -360,7 +369,6 @@ def main(page: ft.Page):
     def buy_package(cat_name, price):
         bal = get_user_balance()
         
-        # فحص الرصيد أولاً
         if bal < price:
             show_alert("رصيد غير كافٍ", f"❌ عذراً، رصيدك غير كافٍ لشراء فئة {cat_name}.\nتحتاج إلى {price:,.0f} ل.س بينما رصيدك الحالي {bal:,.0f} ل.س.")
             return
@@ -432,4 +440,4 @@ def main(page: ft.Page):
 
 if __name__ == '__main__':
     init_db()
-    ft.run(main)
+    ft.app(target=main)
