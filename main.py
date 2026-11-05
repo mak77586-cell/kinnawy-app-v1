@@ -295,7 +295,8 @@ def main(page: ft.Page):
             page.update()
 
     file_picker = ft.FilePicker(on_result=on_file_picked)
-
+    page.overlay.append(file_picker)
+    
     admin_dialog = ft.AlertDialog(
         title=ft.Text("⚙️ لوحة تحكم المشرف - رفع بطاقات PDF"),
         content=ft.Column([
