@@ -25,9 +25,16 @@ USER_ID = 1  # معرف المستخدم المحلي
 ADMIN_USER = "admin"
 ADMIN_PASS = "123456"
 
+# تحديد مسار قاعدة البيانات تلقائياً
+if os.path.exists("/data"):
+    DB_PATH = "/data/shop.db"
+elif os.path.exists("/var/data"):
+    DB_PATH = "/var/data/shop.db"
+else:
+    DB_PATH = "shop.db"
+
 def init_db():
-    """إنشاء وتجهيز جداول قاعدة البيانات"""
-    conn = sqlite3.connect('shop.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS cards (
@@ -56,7 +63,7 @@ def init_db():
     conn.close()
 
 def get_user_balance():
-    conn = sqlite3.connect('shop.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (USER_ID,))
     row = cursor.fetchone()
@@ -64,8 +71,7 @@ def get_user_balance():
     return row[0] if row else 0.0
 
 def import_cards_from_pdf(pdf_path, target_category):
-    """استخراج اليوزر والباسورد من ملف PDF وحفظها في الفئة المحددة"""
-    if not os.path.exists(pdf_path):
+    if not pdf_path or not os.path.exists(pdf_path):
         return 0
     
     try:
@@ -79,7 +85,7 @@ def import_cards_from_pdf(pdf_path, target_category):
         all_numbers = re.findall(r'\b\d{4,8}\b', text)
         added_count = 0
         
-        conn = sqlite3.connect('shop.db')
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
         for i in range(0, len(all_numbers) - 1, 2):
@@ -130,13 +136,13 @@ def main(page: ft.Page):
     page.title = "SYRIA NET"
     page.vertical_alignment = ft.MainAxisAlignment.START
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
-    page.padding = 20
+    page.padding = 15
 
     current_balance = get_user_balance()
 
     balance_text = ft.Text(
         f"الرصيد: {current_balance:,.0f} ل.س",
-        size=20,
+        size=18,
         weight=ft.FontWeight.BOLD,
         color=ft.Colors.GREEN_400
     )
@@ -181,27 +187,46 @@ def main(page: ft.Page):
         ]
     )
 
-    # 2. واجهة الشحن عبر شام كاش
+    # 2. نافذة تنبيه العامة (للأخطاء ونفاد المخزون)
+    alert_msg_text = ft.Text("", size=15)
+    
+    def close_alert_dialog(e):
+        alert_dialog.open = False
+        page.update()
+
+    alert_dialog = ft.AlertDialog(
+        title=ft.Text("تنبيه"),
+        content=alert_msg_text,
+        actions=[ft.TextButton("حسناً", on_click=close_alert_dialog)]
+    )
+
+    def show_alert(title, text):
+        alert_dialog.title.value = title
+        alert_msg_text.value = text
+        alert_dialog.open = True
+        page.update()
+
+    # 3. واجهة الشحن عبر شام كاش
     async def handle_deposit_async(e):
         tx_id = trans_id_input.value.strip()
         if not tx_id:
-            status_msg.value = "⚠️ الرجاء إدخال رقم العملية"
+            status_msg.value = "⚠️ الرجاء إدخال رقم العملية أولاً."
             status_msg.color = ft.Colors.RED_400
             page.update()
             return
 
-        conn = sqlite3.connect('shop.db')
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT transaction_id FROM transactions WHERE transaction_id = ?", (tx_id,))
         if cursor.fetchone():
             conn.close()
-            status_msg.value = "⚠️ عذراً، رقم المعاملة هذا تم استخدامه مسبقاً!"
+            status_msg.value = "❌ رقم المعاملة هذا تم استخدامه مسبقاً!"
             status_msg.color = ft.Colors.RED_400
             page.update()
             return
         conn.close()
 
-        status_msg.value = "⏳ جاري التحقق من صحة المعاملة عبر شام كاش..."
+        status_msg.value = "⏳ جاري التحقق من صحة المعاملة..."
         status_msg.color = ft.Colors.BLUE_400
         page.update()
 
@@ -209,7 +234,7 @@ def main(page: ft.Page):
 
         if result["status"]:
             amount = result["amount"]
-            conn = sqlite3.connect('shop.db')
+            conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, USER_ID))
             cursor.execute("INSERT INTO transactions (transaction_id, user_id, amount) VALUES (?, ?, ?)", (tx_id, USER_ID, amount))
@@ -222,7 +247,7 @@ def main(page: ft.Page):
             status_msg.color = ft.Colors.GREEN_400
             trans_id_input.value = ""
         else:
-            status_msg.value = "❌ لم يتم العثور على المعاملة أو أن البيانات غير صحيحة."
+            status_msg.value = "❌ رقم العملية خطأ أو غير موجود في شبكة شام كاش!"
             status_msg.color = ft.Colors.RED_400
         page.update()
 
@@ -248,7 +273,7 @@ def main(page: ft.Page):
         ]
     )
 
-    # 3. إدارة الملفات المحدثة متوافقة مع Flet 1.0 (بدون إضافتها للـ overlay)
+    # 4. إعداد FilePicker لرفع ملفات الـ PDF
     category_dropdown = ft.Dropdown(
         label="اختر الفئة المستهدفة للرفع",
         options=[ft.dropdown.Option(cat) for cat in CATEGORY_PRICES.keys()],
@@ -256,11 +281,11 @@ def main(page: ft.Page):
     )
 
     def on_file_picked(e: ft.FilePickerResultEvent):
-        if e.files:
+        if e.files and len(e.files) > 0:
             file_path = e.files[0].path
             cat = category_dropdown.value
             if not cat:
-                admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً!"
+                admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
                 admin_status_msg.color = ft.Colors.RED_400
                 page.update()
                 return
@@ -281,12 +306,12 @@ def main(page: ft.Page):
             admin_status_msg,
         ], tight=True, spacing=15),
         actions=[
-            ft.FilledButton("📁 اختيار ملف PDF ورفع", on_click=lambda e: file_picker.pick_files(allowed_extensions=["pdf"])),
+            ft.FilledButton("📁 اختيار ملف PDF ورفع", on_click=lambda e: file_picker.pick_files(allow_multiple=False)),
             ft.TextButton("إغلاق", on_click=lambda e: setattr(admin_dialog, 'open', False) or page.update()),
         ]
     )
 
-    # 4. نافذة تسجيل دخول المشرف (Security Authentication)
+    # 5. نافذة تسجيل دخول المشرف
     admin_user_input = ft.TextField(label="اسم المستخدم", value="admin")
     admin_pass_input = ft.TextField(label="كلمة المرور", password=True, can_reveal_password=True)
 
@@ -313,11 +338,13 @@ def main(page: ft.Page):
         ]
     )
 
-    # إضافة النوافذ فقط لـ overlay
+    # إضافة كافة العناصر وعنصر الاختيار لـ overlay
+    page.overlay.append(file_picker)
     page.overlay.append(deposit_dialog)
     page.overlay.append(card_dialog)
     page.overlay.append(admin_dialog)
     page.overlay.append(login_dialog)
+    page.overlay.append(alert_dialog)
 
     def open_deposit(e):
         status_msg.value = ""
@@ -330,16 +357,16 @@ def main(page: ft.Page):
         login_dialog.open = True
         page.update()
 
-    # 5. منطق شراء الباقات
+    # 6. منطق شراء الباقات مع التنبيهات الصريحة
     def buy_package(cat_name, price):
         bal = get_user_balance()
+        
+        # فحص الرصيد أولاً
         if bal < price:
-            page.snack_bar = ft.SnackBar(ft.Text(f"❌ عذراً، رصيدك غير كافٍ. تحتاج إلى {price} ل.س."))
-            page.snack_bar.open = True
-            page.update()
+            show_alert("رصيد غير كافٍ", f"❌ عذراً، رصيدك غير كافٍ لشراء فئة {cat_name}.\nتحتاج إلى {price:,.0f} ل.س بينما رصيدك الحالي {bal:,.0f} ل.س.")
             return
 
-        conn = sqlite3.connect('shop.db')
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT id, username, password FROM cards WHERE category = ? AND is_sold = 0 LIMIT 1", (cat_name,))
         card = cursor.fetchone()
@@ -361,41 +388,36 @@ def main(page: ft.Page):
             refresh_packages()
         else:
             conn.close()
-            page.snack_bar = ft.SnackBar(ft.Text(f"⚠️ عذراً، نفدت بطاقات فئة {cat_name} حالياً."))
-            page.snack_bar.open = True
-            page.update()
+            show_alert("نفاد المخزون", f"⚠️ عذراً، لا يوجد بطاقات متاحة حالياً لفئة {cat_name}.\nنفذ المخزون من النظام!")
 
     packages_column = ft.Column(spacing=10)
 
     def refresh_packages():
         packages_column.controls.clear()
-        conn = sqlite3.connect('shop.db')
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         for cat, price in CATEGORY_PRICES.items():
             cursor.execute("SELECT COUNT(*) FROM cards WHERE category = ? AND is_sold = 0", (cat,))
             available_count = cursor.fetchone()[0]
             
-            packages_column.controls.append(
-                ft.Card(
-                    content=ft.Container(
-                        content=ft.Row([
-                            ft.Column([
-                                ft.Text(f"فئة {cat}", size=16, weight=ft.FontWeight.BOLD),
-                                ft.Text(f"السعر: {price} ل.س | (المتوفر: {available_count})", size=12, color=ft.Colors.GREY_400),
-                            ]),
-                            ft.FilledButton("شراء", on_click=lambda e, c=cat, p=price: buy_package(c, p))
-                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                        padding=15
-                    )
+            packages_column.controls.append(ft.Card(
+                content=ft.Container(
+                    content=ft.Row([
+                        ft.Column([
+                            ft.Text(f"فئة {cat}", size=16, weight=ft.FontWeight.BOLD),
+                            ft.Text(f"السعر: {price} ل.س | (المتوفر: {available_count})", size=12, color=ft.Colors.GREY_400),
+                        ]),
+                        ft.FilledButton("شراء", on_click=lambda e, c=cat, p=price: buy_package(c, p))
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    padding=15
                 )
-            )
+            ))
         conn.close()
         if page:
             page.update()
 
     refresh_packages()
 
-    # واجهة التطبيق الرئيسية
     page.add(
         ft.Row([
             balance_text,
