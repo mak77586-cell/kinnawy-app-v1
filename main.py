@@ -8,14 +8,6 @@ from pypdf import PdfReader
 import io
 import flet as ft
 
-# لاستدعاء نافذة ملفات النظام على الويندوز
-try:
-    import tkinter as tk
-    from tkinter import filedialog
-    HAS_TK = True
-except ImportError:
-    HAS_TK = False
-
 # بيانات محفظة شام كاش والـ API
 WALLET_ID = "5c3d499c015d7335eb5474e832d06ff3"
 SHAMCASH_API_URL = f"https://api-shamcash.com/api/v1/wallets/shamcash/{WALLET_ID}/transactions?direction=in"
@@ -165,37 +157,48 @@ def main(page: ft.Page):
     admin_status_msg = ft.Text("", size=14)
     login_status_msg = ft.Text("", size=14, color=ft.Colors.RED_400)
 
-    # نافذة تنبيه العامة
-    alert_msg_text = ft.Text("", size=15)
-    
+    # دوال إغلاق النوافذ (تم ربطها بدقة لتضمن عمل أزرار الإلغاء والإغلاق فوراً)
     def close_alert_dialog(e):
         alert_dialog.open = False
         page.update()
 
+    def close_card_dialog(e):
+        card_dialog.open = False
+        page.update()
+
+    def close_deposit_dialog(e):
+        deposit_dialog.open = False
+        page.update()
+
+    def close_login_dialog(e):
+        login_dialog.open = False
+        page.update()
+
+    def close_admin_dialog(e):
+        admin_dialog.open = False
+        page.update()
+
+    # نافذة التنبيه العامة
     alert_dialog = ft.AlertDialog(
         title=ft.Text("تنبيه"),
-        content=alert_msg_text,
+        content=ft.Text("", size=15),
         actions=[ft.TextButton("حسناً", on_click=close_alert_dialog)]
     )
 
     def show_alert(title, text):
         alert_dialog.title.value = title
-        alert_msg_text.value = text
+        alert_dialog.content.value = text
         alert_dialog.open = True
         page.update()
 
     # نافذة عرض البطاقة المباعة
-    def close_card_dialog(e):
-        card_dialog.open = False
-        page.update()
-
     card_dialog = ft.AlertDialog(
         title=ft.Text("✅ تم الشراء بنجاح!"),
         content=ft.Text("جاري التحميل..."),
         actions=[ft.TextButton("إغلاق", on_click=close_card_dialog)]
     )
 
-    # 3. واجهة الشحن عبر شام كاش
+    # 1. واجهة الشحن عبر شام كاش
     async def handle_deposit_async(e):
         tx_id = trans_id_input.value.strip()
         if not tx_id:
@@ -257,46 +260,44 @@ def main(page: ft.Page):
             status_msg,
         ], tight=True, spacing=10),
         actions=[
-            ft.TextButton("إلغاء", on_click=lambda e: setattr(deposit_dialog, 'open', False) or page.update()),
+            ft.TextButton("إلغاء", on_click=close_deposit_dialog),
             ft.FilledButton("تأكيد الشحن", on_click=handle_deposit),
         ]
     )
 
-    # 4. اختيار ملف الـ PDF (يُنشئ FilePicker للموبايل فقط ويترك الكمبيوتر نظيفاً)
+    # 2. اختيار ملف الـ PDF عبر FilePicker النظامي (المثالي للموبايل والـ Android)
     category_dropdown = ft.Dropdown(
         label="اختر الفئة المستهدفة للرفع",
         options=[ft.dropdown.Option(cat) for cat in CATEGORY_PRICES.keys()],
         width=250
     )
 
-    mobile_file_picker = None
-    if not HAS_TK:
-        def on_mobile_file_picked(e: ft.FilePickerResultEvent):
-            if e.files and len(e.files) > 0:
-                file_info = e.files[0]
-                cat = category_dropdown.value
-                if not cat:
-                    admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
-                    admin_status_msg.color = ft.Colors.RED_400
-                    page.update()
-                    return
-                
-                if file_info.bytes:
-                    added = import_cards_from_pdf_bytes(file_info.bytes, cat)
-                    admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح إلى فئة {cat}!"
-                    admin_status_msg.color = ft.Colors.GREEN_400
-                    refresh_packages()
-                else:
-                    admin_status_msg.value = "❌ تعذر قراءة الملف على الجهاز."
-                    admin_status_msg.color = ft.Colors.RED_400
+    def on_file_picked(e: ft.FilePickerResultEvent):
+        if e.files and len(e.files) > 0:
+            file_info = e.files[0]
+            cat = category_dropdown.value
+            if not cat:
+                admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
+                admin_status_msg.color = ft.Colors.RED_400
                 page.update()
+                return
+            
+            if file_info.bytes:
+                added = import_cards_from_pdf_bytes(file_info.bytes, cat)
+                admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح إلى فئة {cat}!"
+                admin_status_msg.color = ft.Colors.GREEN_400
+                refresh_packages()
             else:
-                admin_status_msg.value = "⚠️ لم يتم اختيار أي ملف."
-                admin_status_msg.color = ft.Colors.ORANGE_400
-                page.update()
+                admin_status_msg.value = "❌ تعذر قراءة محتوى الملف على الجهاز."
+                admin_status_msg.color = ft.Colors.RED_400
+            page.update()
+        else:
+            admin_status_msg.value = "⚠️ لم يتم اختيار أي ملف."
+            admin_status_msg.color = ft.Colors.ORANGE_400
+            page.update()
 
-        mobile_file_picker = ft.FilePicker(on_result=on_mobile_file_picked)
-        page.overlay.append(mobile_file_picker)
+    file_picker = ft.FilePicker(on_result=on_file_picked)
+    page.overlay.append(file_picker)
 
     def trigger_file_selection(e):
         cat = category_dropdown.value
@@ -305,48 +306,17 @@ def main(page: ft.Page):
             admin_status_msg.color = ft.Colors.RED_400
             page.update()
             return
-
-        # على الكمبيوتر (Windows) نستخدم Tkinter المباشر بدون أي FilePicker
-        if HAS_TK:
-            file_path = None
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes('-topmost', True)
-            file_path = filedialog.askopenfilename(
-                title="اختر ملف PDF للبطاقات",
-                filetypes=[("PDF Files", "*.pdf")]
+        try:
+            file_picker.pick_files(
+                allow_multiple=False,
+                allowed_extensions=["pdf"],
+                file_type=ft.FilePickerFileType.CUSTOM,
+                with_data=True
             )
-            root.destroy()
-
-            if file_path:
-                try:
-                    with open(file_path, "rb") as f:
-                        file_bytes = f.read()
-                    added = import_cards_from_pdf_bytes(file_bytes, cat)
-                    admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح إلى فئة {cat}!"
-                    admin_status_msg.color = ft.Colors.GREEN_400
-                    refresh_packages()
-                except Exception as ex:
-                    admin_status_msg.value = f"❌ خطأ أثناء قراءة الملف: {ex}"
-                    admin_status_msg.color = ft.Colors.RED_400
-            else:
-                admin_status_msg.value = "⚠️ لم يتم اختيار أي ملف."
-                admin_status_msg.color = ft.Colors.ORANGE_400
+        except Exception as ex:
+            admin_status_msg.value = f"⚠️ خطأ في فتح مستعرض الملفات: {ex}"
+            admin_status_msg.color = ft.Colors.RED_400
             page.update()
-        else:
-            # على الموبايل نستخدم FilePicker الخاص بـ Flet
-            if mobile_file_picker:
-                try:
-                    mobile_file_picker.pick_files(
-                        allow_multiple=False,
-                        allowed_extensions=["pdf"],
-                        file_type=ft.FilePickerFileType.CUSTOM,
-                        with_data=True
-                    )
-                except Exception as ex:
-                    admin_status_msg.value = f"⚠️ خطأ في فتح مستعرض الملفات: {ex}"
-                    admin_status_msg.color = ft.Colors.RED_400
-                    page.update()
 
     admin_dialog = ft.AlertDialog(
         title=ft.Text("⚙️ لوحة تحكم المشرف - رفع بطاقات PDF"),
@@ -360,11 +330,11 @@ def main(page: ft.Page):
             admin_status_msg,
         ], tight=True, spacing=15),
         actions=[
-            ft.TextButton("إغلاق", on_click=lambda e: setattr(admin_dialog, 'open', False) or page.update()),
+            ft.TextButton("إغلاق", on_click=close_admin_dialog),
         ]
     )
 
-    # 5. نافذة تسجيل دخول المشرف
+    # 3. نافذة تسجيل دخول المشرف
     admin_user_input = ft.TextField(label="اسم المستخدم", value="admin")
     admin_pass_input = ft.TextField(label="كلمة المرور", password=True, can_reveal_password=True)
 
@@ -386,12 +356,12 @@ def main(page: ft.Page):
             login_status_msg
         ], tight=True, spacing=10),
         actions=[
-            ft.TextButton("إلغاء", on_click=lambda e: setattr(login_dialog, 'open', False) or page.update()),
+            ft.TextButton("إلغاء", on_click=close_login_dialog),
             ft.FilledButton("دخول", on_click=check_admin_login)
         ]
     )
 
-    # إضافة النوافذ الأساسية إلى الـ overlay فقط (بدون إضافة FilePicker للكمبيوتر لتجنب الشريط الأحمر)
+    # إضافة كافة النوافذ إلى الـ overlay
     page.overlay.append(deposit_dialog)
     page.overlay.append(card_dialog)
     page.overlay.append(admin_dialog)
@@ -411,7 +381,7 @@ def main(page: ft.Page):
         login_dialog.open = True
         page.update()
 
-    # 6. منطق شراء الباقات مع ميزات النسخ والمشاركة وحذف البطاقة المباعة
+    # 4. منطق شراء الباقات مع ميزات النسخ والمشاركة وحذف البطاقة المباعة
     def buy_package(cat_name, price):
         bal = get_user_balance()
         
@@ -437,13 +407,7 @@ def main(page: ft.Page):
             card_details_text = f"📦 الفئة: {cat_name}\n👤 اسم المستخدم: {card_user}\n🔑 كلمة المرور: {card_pass}\n💰 الرصيد المتبقي: {new_bal:,.0f} ل.س\nشكراً لاستخدامك متجر syria net ❤️"
 
             def copy_info(e):
-                if HAS_TK:
-                    root = tk.Tk()
-                    root.withdraw()
-                    root.clipboard_clear()
-                    root.clipboard_append(card_details_text)
-                    root.update()
-                    root.destroy()
+                page.set_clipboard(card_details_text)
                 page.snack_bar = ft.SnackBar(ft.Text("✅ تم نسخ بيانات البطاقة بنجاح!"))
                 page.snack_bar.open = True
                 page.update()
