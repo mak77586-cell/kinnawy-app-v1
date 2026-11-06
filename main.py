@@ -4,8 +4,6 @@ import asyncio
 import aiohttp
 import re
 import urllib.parse
-from pypdf import PdfReader
-import io
 import flet as ft
 
 # بيانات محفظة شام كاش والـ API
@@ -70,19 +68,11 @@ def get_user_balance():
     conn.close()
     return row[0] if row else 0.0
 
-def import_cards_from_pdf_bytes(file_bytes, target_category):
-    if not file_bytes:
+def import_cards_from_text(text, target_category):
+    if not text:
         return 0
     
     try:
-        pdf_file = io.BytesIO(file_bytes)
-        reader = PdfReader(pdf_file)
-        text = ""
-        for page in reader.pages:
-            extracted = page.extract_text()
-            if extracted:
-                text += extracted + "\n"
-                
         all_numbers = re.findall(r'\b\d{4,8}\b', text)
         added_count = 0
         
@@ -102,7 +92,7 @@ def import_cards_from_pdf_bytes(file_bytes, target_category):
         conn.close()
         return added_count
     except Exception as e:
-        print(f"Error reading PDF bytes: {e}")
+        print(f"Error parsing text: {e}")
         return 0
 
 async def verify_shamcash_transaction(tx_id: str) -> dict:
@@ -263,70 +253,59 @@ def main(page: ft.Page):
         ]
     )
 
-    # 2. FilePicker النظامي لاستعراض واختيار ملفات الـ PDF بأمان تام على الموبايل
+    # 2. لوحة تحكم المشرف (إدخال نصي مباشر ومستقر 100% على الموبايل بدون أشرطة حمراء)
     category_dropdown = ft.Dropdown(
         label="اختر الفئة المستهدفة للرفع",
         options=[ft.dropdown.Option(cat) for cat in CATEGORY_PRICES.keys()],
-        width=250
+        width=280
     )
 
-    def on_file_picked(e: ft.FilePickerResultEvent):
-        if e.files and len(e.files) > 0:
-            file_info = e.files[0]
-            cat = category_dropdown.value
-            if not cat:
-                admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
-                admin_status_msg.color = ft.Colors.RED_400
-                page.update()
-                return
-            
-            if file_info.bytes:
-                added = import_cards_from_pdf_bytes(file_info.bytes, cat)
-                admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح إلى فئة {cat}!"
-                admin_status_msg.color = ft.Colors.GREEN_400
-                refresh_packages()
-            else:
-                admin_status_msg.value = "❌ تعذر قراءة محتوى الملف."
-                admin_status_msg.color = ft.Colors.RED_400
-            page.update()
-        else:
-            admin_status_msg.value = "⚠️ لم يتم اختيار أي ملف."
-            admin_status_msg.color = ft.Colors.ORANGE_400
-            page.update()
+    cards_text_input = ft.TextField(
+        label="الصق بيانات البطاقات هنا (اسم المستخدم وكلمة المرور)",
+        multiline=True,
+        min_lines=4,
+        max_lines=8,
+        width=280
+    )
 
-    file_picker = ft.FilePicker(on_result=on_file_picked)
-    page.overlay.append(file_picker)
-
-    def trigger_file_selection(e):
+    def import_from_pasted_text(e):
         cat = category_dropdown.value
         if not cat:
-            admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
+            admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً!"
             admin_status_msg.color = ft.Colors.RED_400
             page.update()
             return
-        try:
-            file_picker.pick_files(
-                allow_multiple=False,
-                allowed_extensions=["pdf"],
-                file_type=ft.FilePickerFileType.CUSTOM,
-                with_data=True
-            )
-        except Exception as ex:
-            admin_status_msg.value = f"⚠️ خطأ في فتح مستعرض الملفات: {ex}"
+        
+        raw_text = cards_text_input.value.strip()
+        if not raw_text:
+            admin_status_msg.value = "⚠️ يرجى لصق بيانات البطاقات في الحقل!"
             admin_status_msg.color = ft.Colors.RED_400
             page.update()
+            return
+
+        added = import_cards_from_text(raw_text, cat)
+        if added > 0:
+            admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح لفئة {cat}!"
+            admin_status_msg.color = ft.Colors.GREEN_400
+            cards_text_input.value = ""
+            refresh_packages()
+        else:
+            admin_status_msg.value = "❌ لم يتم العثور على أرقام صالحة في النص المنسق!"
+            admin_status_msg.color = ft.Colors.RED_400
+        page.update()
 
     admin_dialog = ft.AlertDialog(
-        title=ft.Text("⚙️ لوحة تحكم المشرف - رفع بطاقات PDF"),
+        title=ft.Text("⚙️ لوحة تحكم المشرف - إضافة بطاقات"),
         content=ft.Column([
-            ft.Text("اختر الفئة ثم اضغط لاختيار ملف الـ PDF من هاتفك:"),
+            ft.Text("اختر الفئة والصق بيانات البطاقات:"),
             category_dropdown,
+            cards_text_input,
             ft.FilledButton(
-                "📁 اختيار ملف PDF ورفع", 
-                on_click=trigger_file_selection
+                "📥 استيراد البطاقات وإضافتها", 
+                on_click=import_from_pasted_text
             ),
             admin_status_msg,
-        ], tight=True, spacing=15),
+        ], tight=True, spacing=12),
         actions=[
             ft.TextButton("إغلاق", on_click=close_admin_dialog),
         ]
@@ -359,7 +338,7 @@ def main(page: ft.Page):
         ]
     )
 
-    # إضافة كافة العناصر إلى الـ overlay بشكل سليم
+    # إضافة كافة النوافذ الأساسية إلى الـ overlay (بدون FilePicker نهائياً لتجنب أي شريط أحمر)
     page.overlay.append(deposit_dialog)
     page.overlay.append(card_dialog)
     page.overlay.append(admin_dialog)
@@ -379,7 +358,7 @@ def main(page: ft.Page):
         login_dialog.open = True
         page.update()
 
-    # 4. منطق شراء الباقات والنسخ والمشاركة
+    # 4. منطق شراء الباقات مع النسخ والمشاركة وحذف البطاقة المباعة
     def buy_package(cat_name, price):
         bal = get_user_balance()
         
@@ -426,7 +405,7 @@ def main(page: ft.Page):
             ], tight=True, spacing=10)
             
             card_dialog.actions = [
-                ft.IconButton(icon=ft.Icons.COPY, icon_color=ft.Colors.BLUE, tooltip="نسخ البطاقة", on_click=copy_info),
+                ft.IconButton(icon=ft.Icons.COPY, icon_color=ft.Icons.BLUE, tooltip="نسخ البطاقة", on_click=copy_info),
                 ft.IconButton(icon=ft.Icons.SHARE, icon_color=ft.Icons.GREEN, tooltip="مشاركة عبر واتساب", on_click=share_whatsapp),
                 ft.TextButton("إغلاق", on_click=close_card_dialog)
             ]
