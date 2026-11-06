@@ -3,9 +3,18 @@ import sqlite3
 import asyncio
 import aiohttp
 import re
+import urllib.parse
 from pypdf import PdfReader
 import io
 import flet as ft
+
+# لاستدعاء نافذة ملفات النظام وحافظة النسخ المباشرة على الويندوز
+try:
+    import tkinter as tk
+    from tkinter import filedialog
+    HAS_TK = True
+except ImportError:
+    HAS_TK = False
 
 # بيانات محفظة شام كاش والـ API
 WALLET_ID = "5c3d499c015d7335eb5474e832d06ff3"
@@ -149,46 +158,14 @@ def main(page: ft.Page):
     )
 
     trans_id_input = ft.TextField(
-        label="رقم عملية التحويل (Transaction ID)",
-        border_color=ft.Colors.BLUE_400
+        label="رقم عملية التحويل (Transaction ID)"
     )
     
     status_msg = ft.Text("", size=14)
     admin_status_msg = ft.Text("", size=14)
     login_status_msg = ft.Text("", size=14, color=ft.Colors.RED_400)
 
-    # 1. نافذة إظهار بيانات البطاقات عند الشراء
-    card_title_text = ft.Text("", size=18, weight=ft.FontWeight.BOLD)
-    card_user_text = ft.Text("", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_200)
-    card_pass_text = ft.Text("", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.YELLOW)
-    
-    def close_card_dialog(e):
-        card_dialog.open = False
-        page.update()
-
-    card_dialog = ft.AlertDialog(
-        title=ft.Text("✅ تم الشراء بنجاح!"),
-        content=ft.Column([
-            card_title_text,
-            ft.Text("بيانات الحساب الخاص بك:"),
-            ft.Container(
-                content=ft.Column([
-                    card_user_text,
-                    card_pass_text,
-                ], spacing=5),
-                padding=15,
-                bgcolor="#1e1e1e",
-                border_radius=8,
-                alignment="center"
-            ),
-            ft.Text("شكراً لاستخدامك خدمات SYRIA NET 💙", size=12, color=ft.Colors.GREY)
-        ], tight=True, spacing=10),
-        actions=[
-            ft.TextButton("إغلاق", on_click=close_card_dialog)
-        ]
-    )
-
-    # 2. نافذة تنبيه العامة
+    # نافذة تنبيه العامة
     alert_msg_text = ft.Text("", size=15)
     
     def close_alert_dialog(e):
@@ -206,6 +183,17 @@ def main(page: ft.Page):
         alert_msg_text.value = text
         alert_dialog.open = True
         page.update()
+
+    # نافذة عرض البطاقة المباعة
+    def close_card_dialog(e):
+        card_dialog.open = False
+        page.update()
+
+    card_dialog = ft.AlertDialog(
+        title=ft.Text("✅ تم الشراء بنجاح!"),
+        content=ft.Text("جاري التحميل..."),
+        actions=[ft.TextButton("إغلاق", on_click=close_card_dialog)]
+    )
 
     # 3. واجهة الشحن عبر شام كاش
     async def handle_deposit_async(e):
@@ -274,36 +262,48 @@ def main(page: ft.Page):
         ]
     )
 
-    # 4. إعداد FilePicker كـ "خدمة" وتسجيله في page.services للإصدارات الحديثة
+    # 4. اختيار ملف الـ PDF المباشر والسريع
     category_dropdown = ft.Dropdown(
         label="اختر الفئة المستهدفة للرفع",
         options=[ft.dropdown.Option(cat) for cat in CATEGORY_PRICES.keys()],
         width=250
     )
 
-    def on_file_picked(e: ft.FilePickerResultEvent):
-        if e.files and len(e.files) > 0:
-            file_info = e.files[0]
-            cat = category_dropdown.value
-            if not cat:
-                admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
-                admin_status_msg.color = ft.Colors.RED_400
-                page.update()
-                return
-            
-            if file_info.bytes:
-                added = import_cards_from_pdf_bytes(file_info.bytes, cat)
+    def select_file_desktop(e):
+        cat = category_dropdown.value
+        if not cat:
+            admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
+            admin_status_msg.color = ft.Colors.RED_400
+            page.update()
+            return
+
+        file_path = None
+        if HAS_TK:
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            file_path = filedialog.askopenfilename(
+                title="اختر ملف PDF للبطاقات",
+                filetypes=[("PDF Files", "*.pdf")]
+            )
+            root.destroy()
+
+        if file_path:
+            try:
+                with open(file_path, "rb") as f:
+                    file_bytes = f.read()
+                added = import_cards_from_pdf_bytes(file_bytes, cat)
                 admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح إلى فئة {cat}!"
                 admin_status_msg.color = ft.Colors.GREEN_400
                 refresh_packages()
-            else:
-                admin_status_msg.value = "❌ تعذر قراءة محتوى الملف على الجهاز."
+            except Exception as ex:
+                admin_status_msg.value = f"❌ خطأ أثناء قراءة الملف: {ex}"
                 admin_status_msg.color = ft.Colors.RED_400
-            page.update()
+        else:
+            admin_status_msg.value = "⚠️ لم يتم اختيار أي ملف."
+            admin_status_msg.color = ft.Colors.ORANGE_400
+        page.update()
 
-    file_picker = ft.FilePicker(on_result=on_file_picked)
-    page.services.append(file_picker)  # <--- التسجيل الصحيح كخدمة في Flet الحديث
-    
     admin_dialog = ft.AlertDialog(
         title=ft.Text("⚙️ لوحة تحكم المشرف - رفع بطاقات PDF"),
         content=ft.Column([
@@ -311,7 +311,7 @@ def main(page: ft.Page):
             category_dropdown,
             ft.FilledButton(
                 "📁 اختيار ملف PDF ورفع", 
-                on_click=lambda e: file_picker.pick_files(with_data=True, allow_multiple=False)
+                on_click=select_file_desktop
             ),
             admin_status_msg,
         ], tight=True, spacing=15),
@@ -347,7 +347,7 @@ def main(page: ft.Page):
         ]
     )
 
-    # إضافة النوافذ المرئية فقط إلى الـ overlay
+    # إضافة النوافذ المرئية إلى الـ overlay
     page.overlay.append(deposit_dialog)
     page.overlay.append(card_dialog)
     page.overlay.append(admin_dialog)
@@ -367,7 +367,7 @@ def main(page: ft.Page):
         login_dialog.open = True
         page.update()
 
-    # 6. منطق شراء الباقات مع التنبيهات الصريحة
+    # 6. منطق شراء الباقات مع حل مشاكل النسخ والتحقق المباشر من المخزون
     def buy_package(cat_name, price):
         bal = get_user_balance()
         
@@ -377,23 +377,60 @@ def main(page: ft.Page):
 
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, username, password FROM cards WHERE category = ? AND is_sold = 0 LIMIT 1", (cat_name,))
+        # جلب أول بطاقة متاحة مباشرة
+        cursor.execute("SELECT id, username, password FROM cards WHERE category = ? LIMIT 1", (cat_name,))
         card = cursor.fetchone()
 
         if card:
             card_id, card_user, card_pass = card
+            # خصم الرصيد وحذف البطاقة المباعة نهائياً من قاعدة البيانات لعدم تكرارها
             cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (price, USER_ID))
-            cursor.execute("UPDATE cards SET is_sold = 1 WHERE id = ?", (card_id,))
+            cursor.execute("DELETE FROM cards WHERE id = ?", (card_id,))
             conn.commit()
             conn.close()
 
             new_bal = get_user_balance()
             balance_text.value = f"الرصيد: {new_bal:,.0f} ل.س"
             
-            card_title_text.value = f"📦 فئة {cat_name}"
-            card_user_text.value = f"👤 اسم المستخدم: {card_user}"
-            card_pass_text.value = f"🔑 كلمة المرور: {card_pass}"
+            # نص البطاقة للنسخ والمشاركة
+            card_details_text = f"📦 الفئة: {cat_name}\n👤 اسم المستخدم: {card_user}\n🔑 كلمة المرور: {card_pass}\n💰 الرصيد المتبقي: {new_bal:,.0f} ل.س\nشكراً لاستخدامك متجر syria net ❤️"
+
+            def copy_info(e):
+                if HAS_TK:
+                    root = tk.Tk()
+                    root.withdraw()
+                    root.clipboard_clear()
+                    root.clipboard_append(card_details_text)
+                    root.update()
+                    root.destroy()
+                page.snack_bar = ft.SnackBar(ft.Text("✅ تم نسخ بيانات البطاقة بنجاح!"))
+                page.snack_bar.open = True
+                page.update()
+
+            def share_whatsapp(e):
+                encoded_msg = urllib.parse.quote(f"تفاصيل بطاقة إنترنت من SYRIA NET:\n{card_details_text}")
+                url = f"https://api.whatsapp.com/send?text={encoded_msg}"
+                page.launch_url(url)
+
+            # ضبط محتوى نافذة النجاح مع الألوان الواضحة وأزرار النسخ والمشاركة الآمنة
+            card_dialog.title = ft.Text("✅ تم الشراء بنجاح!")
+            card_dialog.content = ft.Column([
+                ft.Text(f"📦 الفئة: {cat_name}", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK),
+                ft.Text(f"👤 اسم المستخدم: {card_user}", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_900, selectable=True),
+                ft.Text(f"🔑 كلمة المرور: {card_pass}", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.RED_900, selectable=True),
+                ft.Divider(),
+                ft.Text(f"💰 رصيدك المتبقي: {new_bal:,.0f} ل.س", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_800),
+                ft.Text("شكراً لاستخدامك متجر syria net ❤️", size=12, color=ft.Colors.GREY_700)
+            ], tight=True, spacing=10)
+            
+            card_dialog.actions = [
+                ft.IconButton(icon=ft.Icons.COPY, icon_color=ft.Colors.BLUE, tooltip="نسخ البطاقة", on_click=copy_info),
+                ft.IconButton(icon=ft.Icons.SHARE, icon_color=ft.Colors.GREEN, tooltip="مشاركة عبر واتساب", on_click=share_whatsapp),
+                ft.TextButton("إغلاق", on_click=close_card_dialog)
+            ]
+            
             card_dialog.open = True
+            card_dialog.update()
             refresh_packages()
         else:
             conn.close()
@@ -406,7 +443,8 @@ def main(page: ft.Page):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         for cat, price in CATEGORY_PRICES.items():
-            cursor.execute("SELECT COUNT(*) FROM cards WHERE category = ? AND is_sold = 0", (cat,))
+            # حساب العدد الفعلي المتبقي في الجدول
+            cursor.execute("SELECT COUNT(*) FROM cards WHERE category = ?", (cat,))
             available_count = cursor.fetchone()[0]
             
             packages_column.controls.append(ft.Card(
