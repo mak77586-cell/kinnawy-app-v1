@@ -4,6 +4,8 @@ import asyncio
 import aiohttp
 import re
 import urllib.parse
+from pypdf import PdfReader
+import io
 import flet as ft
 
 # بيانات محفظة شام كاش والـ API
@@ -68,11 +70,19 @@ def get_user_balance():
     conn.close()
     return row[0] if row else 0.0
 
-def import_cards_from_text(text, target_category):
-    if not text:
+def import_cards_from_pdf_bytes(file_bytes, target_category):
+    if not file_bytes:
         return 0
     
     try:
+        pdf_file = io.BytesIO(file_bytes)
+        reader = PdfReader(pdf_file)
+        text = ""
+        for page in reader.pages:
+            extracted = page.extract_text()
+            if extracted:
+                text += extracted + "\n"
+                
         all_numbers = re.findall(r'\b\d{4,8}\b', text)
         added_count = 0
         
@@ -83,16 +93,22 @@ def import_cards_from_text(text, target_category):
             usr = all_numbers[i]
             pwd = all_numbers[i+1]
             
-            cursor.execute("SELECT id FROM cards WHERE category = ? AND username = ? AND password = ?", (target_category, usr, pwd))
+            cursor.execute(
+                "SELECT id FROM cards WHERE category = ? AND username = ? AND password = ?",
+                (target_category, usr, pwd)
+            )
             if not cursor.fetchone():
-                cursor.execute("INSERT INTO cards (category, username, password, is_sold) VALUES (?, ?, ?, 0)", (target_category, usr, pwd))
+                cursor.execute(
+                    "INSERT INTO cards (category, username, password, is_sold) VALUES (?, ?, ?, 0)",
+                    (target_category, usr, pwd)
+                )
                 added_count += 1
                 
         conn.commit()
         conn.close()
         return added_count
     except Exception as e:
-        print(f"Error parsing text: {e}")
+        print(f"Error reading PDF bytes: {e}")
         return 0
 
 async def verify_shamcash_transaction(tx_id: str) -> dict:
@@ -120,7 +136,7 @@ async def verify_shamcash_transaction(tx_id: str) -> dict:
                             amount = float(tx.get("amount", 0))
                             return {"status": True, "amount": amount}
         return {"status": False, "amount": 0}
-    except Exception as e:
+    except Exception:
         return {"status": False, "amount": 0}
 
 def main(page: ft.Page):
@@ -130,13 +146,18 @@ def main(page: ft.Page):
     page.padding = 15
     page.scroll = ft.ScrollMode.AUTO
 
+    # تعريف خدمات Flet الحديثة (بدون وضعها في page.overlay نهائياً لمنع الشريط الأحمر)
+    file_picker = ft.FilePicker()
+    clipboard = ft.Clipboard()
+    url_launcher = ft.UrlLauncher()
+
     current_balance = get_user_balance()
 
     balance_text = ft.Text(
         f"الرصيد: {current_balance:,.0f} ل.س",
         size=18,
         weight=ft.FontWeight.BOLD,
-        color=ft.Colors.GREEN_400
+        color="#66BB6A"
     )
 
     trans_id_input = ft.TextField(
@@ -145,7 +166,7 @@ def main(page: ft.Page):
     
     status_msg = ft.Text("", size=14)
     admin_status_msg = ft.Text("", size=14)
-    login_status_msg = ft.Text("", size=14, color=ft.Colors.RED_400)
+    login_status_msg = ft.Text("", size=14, color="#EF5350")
 
     # دوال إغلاق النوافذ المنبثقة
     def close_alert_dialog(e):
@@ -187,11 +208,11 @@ def main(page: ft.Page):
     )
 
     # 1. واجهة الشحن عبر شام كاش
-    async def handle_deposit_async(e):
+    async def handle_deposit(e):
         tx_id = trans_id_input.value.strip()
         if not tx_id:
             status_msg.value = "⚠️ الرجاء إدخال رقم العملية أولاً."
-            status_msg.color = ft.Colors.RED_400
+            status_msg.color = "#EF5350"
             page.update()
             return
 
@@ -201,13 +222,13 @@ def main(page: ft.Page):
         if cursor.fetchone():
             conn.close()
             status_msg.value = "❌ رقم المعاملة هذا تم استخدامه مسبقاً!"
-            status_msg.color = ft.Colors.RED_400
+            status_msg.color = "#EF5350"
             page.update()
             return
         conn.close()
 
         status_msg.value = "⏳ جاري التحقق من صحة المعاملة..."
-        status_msg.color = ft.Colors.BLUE_400
+        status_msg.color = "#42A5F5"
         page.update()
 
         result = await verify_shamcash_transaction(tx_id)
@@ -224,22 +245,19 @@ def main(page: ft.Page):
             new_bal = get_user_balance()
             balance_text.value = f"الرصيد: {new_bal:,.0f} ل.س"
             status_msg.value = f"✅ تم تأكيد المعاملة وإضافة {amount:,.0f} ل.س بنجاح!"
-            status_msg.color = ft.Colors.GREEN_400
+            status_msg.color = "#66BB6A"
             trans_id_input.value = ""
         else:
             status_msg.value = "❌ رقم العملية خطأ أو غير موجود في شبكة شام كاش!"
-            status_msg.color = ft.Colors.RED_400
+            status_msg.color = "#EF5350"
         page.update()
-
-    def handle_deposit(e):
-        asyncio.create_task(handle_deposit_async(e))
 
     deposit_dialog = ft.AlertDialog(
         title=ft.Text("➕ شحن الرصيد عبر شام كاش"),
         content=ft.Column([
             ft.Text("رقم محفظتنا للاستلام:"),
             ft.Container(
-                content=ft.Text(WALLET_ID, color=ft.Colors.YELLOW, weight=ft.FontWeight.BOLD, selectable=True),
+                content=ft.Text(WALLET_ID, color="#FFEB3B", weight=ft.FontWeight.BOLD, selectable=True),
                 padding=10,
                 bgcolor="#2d2d2d",
                 border_radius=8,
@@ -253,59 +271,69 @@ def main(page: ft.Page):
         ]
     )
 
-    # 2. لوحة تحكم المشرف (إدخال نصي مباشر ومستقر 100% على الموبايل بدون أشرطة حمراء)
+    # 2. اختيار ملف الـ PDF بالطريقة الحديثة المتوافقة مع Flet 0.80+ على الموبايل والكمبيوتر
     category_dropdown = ft.Dropdown(
         label="اختر الفئة المستهدفة للرفع",
         options=[ft.dropdown.Option(cat) for cat in CATEGORY_PRICES.keys()],
-        width=280
+        width=250
     )
 
-    cards_text_input = ft.TextField(
-        label="الصق بيانات البطاقات هنا (اسم المستخدم وكلمة المرور)",
-        multiline=True,
-        min_lines=4,
-        max_lines=8,
-        width=280
-    )
-
-    def import_from_pasted_text(e):
+    async def trigger_file_selection(e):
         cat = category_dropdown.value
         if not cat:
-            admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً!"
-            admin_status_msg.color = ft.Colors.RED_400
-            page.update()
-            return
-        
-        raw_text = cards_text_input.value.strip()
-        if not raw_text:
-            admin_status_msg.value = "⚠️ يرجى لصق بيانات البطاقات في الحقل!"
-            admin_status_msg.color = ft.Colors.RED_400
+            admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
+            admin_status_msg.color = "#EF5350"
             page.update()
             return
 
-        added = import_cards_from_text(raw_text, cat)
-        if added > 0:
-            admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح لفئة {cat}!"
-            admin_status_msg.color = ft.Colors.GREEN_400
-            cards_text_input.value = ""
-            refresh_packages()
-        else:
-            admin_status_msg.value = "❌ لم يتم العثور على أرقام صالحة في النص المنسق!"
-            admin_status_msg.color = ft.Colors.RED_400
+        admin_status_msg.value = "⏳ جاري فتح مستعرض الملفات..."
+        admin_status_msg.color = "#42A5F5"
+        page.update()
+
+        try:
+            files = await file_picker.pick_files(
+                allow_multiple=False,
+                allowed_extensions=["pdf"],
+                file_type=ft.FilePickerFileType.CUSTOM,
+                with_data=True
+            )
+            if files and len(files) > 0:
+                file_info = files[0]
+                file_bytes = file_info.bytes
+
+                # احتياطياً إذا أعاد النظام مسار الملف بدلاً من البايتات
+                if not file_bytes and getattr(file_info, "path", None):
+                    with open(file_info.path, "rb") as f:
+                        file_bytes = f.read()
+
+                if file_bytes:
+                    added = import_cards_from_pdf_bytes(file_bytes, cat)
+                    admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح إلى فئة {cat}!"
+                    admin_status_msg.color = "#66BB6A"
+                    refresh_packages()
+                else:
+                    admin_status_msg.value = "❌ تعذر قراءة محتوى ملف الـ PDF."
+                    admin_status_msg.color = "#EF5350"
+            else:
+                admin_status_msg.value = "⚠️ لم يتم اختيار أي ملف."
+                admin_status_msg.color = "#FFA726"
+        except Exception as ex:
+            admin_status_msg.value = f"❌ خطأ أثناء اختيار الملف: {ex}"
+            admin_status_msg.color = "#EF5350"
+
         page.update()
 
     admin_dialog = ft.AlertDialog(
-        title=ft.Text("⚙️ لوحة تحكم المشرف - إضافة بطاقات"),
+        title=ft.Text("⚙️ لوحة تحكم المشرف - رفع بطاقات PDF"),
         content=ft.Column([
-            ft.Text("اختر الفئة والصق بيانات البطاقات:"),
+            ft.Text("اختر الفئة ثم اضغط لاختيار ملف الـ PDF من جهازك:"),
             category_dropdown,
-            cards_text_input,
             ft.FilledButton(
-                "📥 استيراد البطاقات وإضافتها", 
-                on_click=import_from_pasted_text
+                "📁 اختيار ملف PDF ورفع",
+                on_click=trigger_file_selection
             ),
             admin_status_msg,
-        ], tight=True, spacing=12),
+        ], tight=True, spacing=15),
         actions=[
             ft.TextButton("إغلاق", on_click=close_admin_dialog),
         ]
@@ -338,7 +366,7 @@ def main(page: ft.Page):
         ]
     )
 
-    # إضافة كافة النوافذ الأساسية إلى الـ overlay (بدون FilePicker نهائياً لتجنب أي شريط أحمر)
+    # إضافة النوافذ الحوارية فقط إلى الـ overlay
     page.overlay.append(deposit_dialog)
     page.overlay.append(card_dialog)
     page.overlay.append(admin_dialog)
@@ -381,38 +409,48 @@ def main(page: ft.Page):
             new_bal = get_user_balance()
             balance_text.value = f"الرصيد: {new_bal:,.0f} ل.س"
             
-            card_details_text = f"📦 الفئة: {cat_name}\n👤 اسم المستخدم: {card_user}\n🔑 كلمة المرور: {card_pass}\n💰 الرصيد المتبقي: {new_bal:,.0f} ل.س\nشكراً لاستخدامك متجر syria net ❤️"
+            card_details_text = (
+                f"📦 الفئة: {cat_name}\n"
+                f"👤 اسم المستخدم: {card_user}\n"
+                f"🔑 كلمة المرور: {card_pass}\n"
+                f"💰 الرصيد المتبقي: {new_bal:,.0f} ل.س\n"
+                f"شكراً لاستخدامك متجر syria net ❤️"
+            )
 
-            def copy_info(e):
-                page.set_clipboard(card_details_text)
-                page.snack_bar = ft.SnackBar(ft.Text("✅ تم نسخ بيانات البطاقة بنجاح!"))
-                page.snack_bar.open = True
-                page.update()
+            async def copy_info(e):
+                try:
+                    await clipboard.set(card_details_text)
+                    show_alert("تم النسخ", "✅ تم نسخ بيانات البطاقة إلى الحافظة بنجاح!")
+                except Exception:
+                    show_alert("نسخ", "يمكنك الضغط مطولاً على الرقم لنسخه يدوياً.")
 
-            def share_whatsapp(e):
+            async def share_whatsapp(e):
                 encoded_msg = urllib.parse.quote(f"تفاصيل بطاقة إنترنت من SYRIA NET:\n{card_details_text}")
                 url = f"https://api.whatsapp.com/send?text={encoded_msg}"
-                page.launch_url(url)
+                try:
+                    await url_launcher.launch_url(url)
+                except Exception:
+                    pass
 
             card_dialog.title = ft.Text("✅ تم الشراء بنجاح!")
             card_dialog.content = ft.Column([
-                ft.Text(f"📦 الفئة: {cat_name}", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK),
-                ft.Text(f"👤 اسم المستخدم: {card_user}", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_900, selectable=True),
-                ft.Text(f"🔑 كلمة المرور: {card_pass}", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.RED_900, selectable=True),
+                ft.Text(f"📦 الفئة: {cat_name}", size=16, weight=ft.FontWeight.BOLD),
+                ft.Text(f"👤 اسم المستخدم: {card_user}", size=16, weight=ft.FontWeight.BOLD, color="#2196F3", selectable=True),
+                ft.Text(f"🔑 كلمة المرور: {card_pass}", size=16, weight=ft.FontWeight.BOLD, color="#F44336", selectable=True),
                 ft.Divider(),
-                ft.Text(f"💰 رصيدك المتبقي: {new_bal:,.0f} ل.س", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_800),
-                ft.Text("شكراً لاستخدامك متجر syria net ❤️", size=12, color=ft.Colors.GREY_700)
+                ft.Text(f"💰 رصيدك المتبقي: {new_bal:,.0f} ل.س", size=16, weight=ft.FontWeight.BOLD, color="#4CAF50"),
+                ft.Text("شكراً لاستخدامك متجر syria net ❤️", size=12, color="#9E9E9E")
             ], tight=True, spacing=10)
             
             card_dialog.actions = [
-                ft.IconButton(icon=ft.Icons.COPY, icon_color=ft.Icons.BLUE, tooltip="نسخ البطاقة", on_click=copy_info),
-                ft.IconButton(icon=ft.Icons.SHARE, icon_color=ft.Icons.GREEN, tooltip="مشاركة عبر واتساب", on_click=share_whatsapp),
+                ft.FilledButton("📋 نسخ", on_click=copy_info),
+                ft.FilledButton("📲 واتساب", on_click=share_whatsapp),
                 ft.TextButton("إغلاق", on_click=close_card_dialog)
             ]
             
             card_dialog.open = True
-            card_dialog.update()
             refresh_packages()
+            page.update()
         else:
             conn.close()
             show_alert("نفاد المخزون", f"⚠️ عذراً، لا يوجد بطاقات متاحة حالياً لفئة {cat_name}.\nنفذ المخزون من النظام!")
@@ -432,7 +470,7 @@ def main(page: ft.Page):
                     content=ft.Row([
                         ft.Column([
                             ft.Text(f"فئة {cat}", size=16, weight=ft.FontWeight.BOLD),
-                            ft.Text(f"السعر: {price} ل.س | (المتوفر: {available_count})", size=12, color=ft.Colors.GREY_400),
+                            ft.Text(f"السعر: {price} ل.س | (المتوفر: {available_count})", size=12, color="#9E9E9E"),
                         ]),
                         ft.FilledButton("شراء", on_click=lambda e, c=cat, p=price: buy_package(c, p))
                     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
@@ -449,7 +487,7 @@ def main(page: ft.Page):
         ft.Row([
             balance_text,
             ft.Row([
-                ft.FilledButton("⚙️ المشرف", on_click=open_admin, bgcolor=ft.Colors.ORANGE_800),
+                ft.FilledButton("⚙️ المشرف", on_click=open_admin),
                 ft.FilledButton("➕ شحن الرصيد", on_click=open_deposit),
             ], spacing=10)
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
