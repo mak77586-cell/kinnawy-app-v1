@@ -157,6 +157,7 @@ def main(page: ft.Page):
     admin_status_msg = ft.Text("", size=14)
     login_status_msg = ft.Text("", size=14, color=ft.Colors.RED_400)
 
+    # دوال إغلاق النوافذ المنبثقة
     def close_alert_dialog(e):
         alert_dialog.open = False
         page.update()
@@ -262,71 +263,67 @@ def main(page: ft.Page):
         ]
     )
 
-    # 2. إدخال اسم ملف الـ PDF للاستيراد المباشر والمستقر تماماً على الموبايل
+    # 2. FilePicker النظامي لاستعراض واختيار ملفات الـ PDF بأمان تام على الموبايل
     category_dropdown = ft.Dropdown(
         label="اختر الفئة المستهدفة للرفع",
         options=[ft.dropdown.Option(cat) for cat in CATEGORY_PRICES.keys()],
         width=250
     )
 
-    file_path_input = ft.TextField(
-        label="اسم ملف الـ PDF (مثال: cards.pdf)",
-        value="cards.pdf",
-        width=250
-    )
+    def on_file_picked(e: ft.FilePickerResultEvent):
+        if e.files and len(e.files) > 0:
+            file_info = e.files[0]
+            cat = category_dropdown.value
+            if not cat:
+                admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
+                admin_status_msg.color = ft.Colors.RED_400
+                page.update()
+                return
+            
+            if file_info.bytes:
+                added = import_cards_from_pdf_bytes(file_info.bytes, cat)
+                admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح إلى فئة {cat}!"
+                admin_status_msg.color = ft.Colors.GREEN_400
+                refresh_packages()
+            else:
+                admin_status_msg.value = "❌ تعذر قراءة محتوى الملف."
+                admin_status_msg.color = ft.Colors.RED_400
+            page.update()
+        else:
+            admin_status_msg.value = "⚠️ لم يتم اختيار أي ملف."
+            admin_status_msg.color = ft.Colors.ORANGE_400
+            page.update()
 
-    def import_from_path(e):
+    file_picker = ft.FilePicker(on_result=on_file_picked)
+    page.overlay.append(file_picker)
+
+    def trigger_file_selection(e):
         cat = category_dropdown.value
         if not cat:
-            admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً!"
+            admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
             admin_status_msg.color = ft.Colors.RED_400
             page.update()
             return
-        
-        filename = file_path_input.value.strip()
-        if not filename:
-            admin_status_msg.value = "⚠️ يرجى إدخال اسم الملف!"
+        try:
+            file_picker.pick_files(
+                allow_multiple=False,
+                allowed_extensions=["pdf"],
+                file_type=ft.FilePickerFileType.CUSTOM,
+                with_data=True
+            )
+        except Exception as ex:
+            admin_status_msg.value = f"⚠️ خطأ في فتح مستعرض الملفات: {ex}"
             admin_status_msg.color = ft.Colors.RED_400
             page.update()
-            return
-
-        # البحث عن الملف في المجلدات الشائعة على الأندرويد
-        possible_paths = [
-            filename,
-            os.path.join("/sdcard/Download", filename),
-            os.path.join("/storage/emulated/0/Download", filename),
-            os.path.join(os.path.expanduser("~"), "Downloads", filename)
-        ]
-
-        file_bytes = None
-        for path in possible_paths:
-            if os.path.exists(path):
-                try:
-                    with open(path, "rb") as f:
-                        file_bytes = f.read()
-                    break
-                except Exception:
-                    pass
-
-        if file_bytes:
-            added = import_cards_from_pdf_bytes(file_bytes, cat)
-            admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح لفئة {cat}!"
-            admin_status_msg.color = ft.Colors.GREEN_400
-            refresh_packages()
-        else:
-            admin_status_msg.value = f"❌ لم يتم العثور على الملف '{filename}' في التنزيلات!"
-            admin_status_msg.color = ft.Colors.RED_400
-        page.update()
 
     admin_dialog = ft.AlertDialog(
         title=ft.Text("⚙️ لوحة تحكم المشرف - رفع بطاقات PDF"),
         content=ft.Column([
-            ft.Text("اختر الفئة واكتب اسم ملف الـ PDF في التنزيلات:"),
+            ft.Text("اختر الفئة ثم اضغط لاختيار ملف الـ PDF من هاتفك:"),
             category_dropdown,
-            file_path_input,
             ft.FilledButton(
-                "📁 استيراد البطاقات", 
-                on_click=import_from_path
+                "📁 اختيار ملف PDF ورفع", 
+                on_click=trigger_file_selection
             ),
             admin_status_msg,
         ], tight=True, spacing=15),
@@ -362,7 +359,7 @@ def main(page: ft.Page):
         ]
     )
 
-    # إضافة النوافذ للـ overlay (بدون أي FilePicker نهائياً لضمان عدم ظهور أي شريط أحمر)
+    # إضافة كافة العناصر إلى الـ overlay بشكل سليم
     page.overlay.append(deposit_dialog)
     page.overlay.append(card_dialog)
     page.overlay.append(admin_dialog)
@@ -382,7 +379,7 @@ def main(page: ft.Page):
         login_dialog.open = True
         page.update()
 
-    # 4. منطق شراء الباقات مع النسخ والمشاركة وحذف البطاقة المباعة
+    # 4. منطق شراء الباقات والنسخ والمشاركة
     def buy_package(cat_name, price):
         bal = get_user_balance()
         
