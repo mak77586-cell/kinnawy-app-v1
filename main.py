@@ -157,7 +157,7 @@ def main(page: ft.Page):
     admin_status_msg = ft.Text("", size=14)
     login_status_msg = ft.Text("", size=14, color=ft.Colors.RED_400)
 
-    # دوال إغلاق النوافذ (تم ربطها بدقة لتضمن عمل أزرار الإلغاء والإغلاق فوراً)
+    # دوال إغلاق النوافذ المنبثقة بدقة
     def close_alert_dialog(e):
         alert_dialog.open = False
         page.update()
@@ -265,7 +265,7 @@ def main(page: ft.Page):
         ]
     )
 
-    # 2. اختيار ملف الـ PDF عبر FilePicker النظامي (المثالي للموبايل والـ Android)
+    # 2. اختيار ملف الـ PDF عبر FilePicker النظامي (متوافق مع الموبايل تماماً)
     category_dropdown = ft.Dropdown(
         label="اختر الفئة المستهدفة للرفع",
         options=[ft.dropdown.Option(cat) for cat in CATEGORY_PRICES.keys()],
@@ -288,7 +288,7 @@ def main(page: ft.Page):
                 admin_status_msg.color = ft.Colors.GREEN_400
                 refresh_packages()
             else:
-                admin_status_msg.value = "❌ تعذر قراءة محتوى الملف على الجهاز."
+                admin_status_msg.value = "❌ تعذر قراءة محتوى الملف على الهاتف."
                 admin_status_msg.color = ft.Colors.RED_400
             page.update()
         else:
@@ -381,7 +381,7 @@ def main(page: ft.Page):
         login_dialog.open = True
         page.update()
 
-    # 4. منطق شراء الباقات مع ميزات النسخ والمشاركة وحذف البطاقة المباعة
+    # 4. منطق شراء الباقات مع النسخ، المشاركة، وحذف البطاقة المباعة
     def buy_package(cat_name, price):
         bal = get_user_balance()
         
