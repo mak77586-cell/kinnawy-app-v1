@@ -157,7 +157,6 @@ def main(page: ft.Page):
     admin_status_msg = ft.Text("", size=14)
     login_status_msg = ft.Text("", size=14, color=ft.Colors.RED_400)
 
-    # دوال إغلاق النوافذ المنبثقة بدقة
     def close_alert_dialog(e):
         alert_dialog.open = False
         page.update()
@@ -178,7 +177,6 @@ def main(page: ft.Page):
         admin_dialog.open = False
         page.update()
 
-    # نافذة التنبيه العامة
     alert_dialog = ft.AlertDialog(
         title=ft.Text("تنبيه"),
         content=ft.Text("", size=15),
@@ -191,7 +189,6 @@ def main(page: ft.Page):
         alert_dialog.open = True
         page.update()
 
-    # نافذة عرض البطاقة المباعة
     card_dialog = ft.AlertDialog(
         title=ft.Text("✅ تم الشراء بنجاح!"),
         content=ft.Text("جاري التحميل..."),
@@ -265,67 +262,71 @@ def main(page: ft.Page):
         ]
     )
 
-    # 2. اختيار ملف الـ PDF عبر FilePicker النظامي (متوافق مع الموبايل تماماً)
+    # 2. إدخال اسم ملف الـ PDF للاستيراد المباشر والمستقر تماماً على الموبايل
     category_dropdown = ft.Dropdown(
         label="اختر الفئة المستهدفة للرفع",
         options=[ft.dropdown.Option(cat) for cat in CATEGORY_PRICES.keys()],
         width=250
     )
 
-    def on_file_picked(e: ft.FilePickerResultEvent):
-        if e.files and len(e.files) > 0:
-            file_info = e.files[0]
-            cat = category_dropdown.value
-            if not cat:
-                admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
-                admin_status_msg.color = ft.Colors.RED_400
-                page.update()
-                return
-            
-            if file_info.bytes:
-                added = import_cards_from_pdf_bytes(file_info.bytes, cat)
-                admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح إلى فئة {cat}!"
-                admin_status_msg.color = ft.Colors.GREEN_400
-                refresh_packages()
-            else:
-                admin_status_msg.value = "❌ تعذر قراءة محتوى الملف على الهاتف."
-                admin_status_msg.color = ft.Colors.RED_400
-            page.update()
-        else:
-            admin_status_msg.value = "⚠️ لم يتم اختيار أي ملف."
-            admin_status_msg.color = ft.Colors.ORANGE_400
-            page.update()
+    file_path_input = ft.TextField(
+        label="اسم ملف الـ PDF (مثال: cards.pdf)",
+        value="cards.pdf",
+        width=250
+    )
 
-    file_picker = ft.FilePicker(on_result=on_file_picked)
-    page.overlay.append(file_picker)
-
-    def trigger_file_selection(e):
+    def import_from_path(e):
         cat = category_dropdown.value
         if not cat:
-            admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
+            admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً!"
             admin_status_msg.color = ft.Colors.RED_400
             page.update()
             return
-        try:
-            file_picker.pick_files(
-                allow_multiple=False,
-                allowed_extensions=["pdf"],
-                file_type=ft.FilePickerFileType.CUSTOM,
-                with_data=True
-            )
-        except Exception as ex:
-            admin_status_msg.value = f"⚠️ خطأ في فتح مستعرض الملفات: {ex}"
+        
+        filename = file_path_input.value.strip()
+        if not filename:
+            admin_status_msg.value = "⚠️ يرجى إدخال اسم الملف!"
             admin_status_msg.color = ft.Colors.RED_400
             page.update()
+            return
+
+        # البحث عن الملف في المجلدات الشائعة على الأندرويد
+        possible_paths = [
+            filename,
+            os.path.join("/sdcard/Download", filename),
+            os.path.join("/storage/emulated/0/Download", filename),
+            os.path.join(os.path.expanduser("~"), "Downloads", filename)
+        ]
+
+        file_bytes = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                try:
+                    with open(path, "rb") as f:
+                        file_bytes = f.read()
+                    break
+                except Exception:
+                    pass
+
+        if file_bytes:
+            added = import_cards_from_pdf_bytes(file_bytes, cat)
+            admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح لفئة {cat}!"
+            admin_status_msg.color = ft.Colors.GREEN_400
+            refresh_packages()
+        else:
+            admin_status_msg.value = f"❌ لم يتم العثور على الملف '{filename}' في التنزيلات!"
+            admin_status_msg.color = ft.Colors.RED_400
+        page.update()
 
     admin_dialog = ft.AlertDialog(
         title=ft.Text("⚙️ لوحة تحكم المشرف - رفع بطاقات PDF"),
         content=ft.Column([
-            ft.Text("اختر الفئة ثم اضغط زر اختيار ملفات الـ PDF:"),
+            ft.Text("اختر الفئة واكتب اسم ملف الـ PDF في التنزيلات:"),
             category_dropdown,
+            file_path_input,
             ft.FilledButton(
-                "📁 اختيار ملف PDF ورفع", 
-                on_click=trigger_file_selection
+                "📁 استيراد البطاقات", 
+                on_click=import_from_path
             ),
             admin_status_msg,
         ], tight=True, spacing=15),
@@ -361,7 +362,7 @@ def main(page: ft.Page):
         ]
     )
 
-    # إضافة كافة النوافذ إلى الـ overlay
+    # إضافة النوافذ للـ overlay (بدون أي FilePicker نهائياً لضمان عدم ظهور أي شريط أحمر)
     page.overlay.append(deposit_dialog)
     page.overlay.append(card_dialog)
     page.overlay.append(admin_dialog)
@@ -381,7 +382,7 @@ def main(page: ft.Page):
         login_dialog.open = True
         page.update()
 
-    # 4. منطق شراء الباقات مع النسخ، المشاركة، وحذف البطاقة المباعة
+    # 4. منطق شراء الباقات مع النسخ والمشاركة وحذف البطاقة المباعة
     def buy_package(cat_name, price):
         bal = get_user_balance()
         
@@ -429,7 +430,7 @@ def main(page: ft.Page):
             
             card_dialog.actions = [
                 ft.IconButton(icon=ft.Icons.COPY, icon_color=ft.Colors.BLUE, tooltip="نسخ البطاقة", on_click=copy_info),
-                ft.IconButton(icon=ft.Icons.SHARE, icon_color=ft.Colors.GREEN, tooltip="مشاركة عبر واتساب", on_click=share_whatsapp),
+                ft.IconButton(icon=ft.Icons.SHARE, icon_color=ft.Icons.GREEN, tooltip="مشاركة عبر واتساب", on_click=share_whatsapp),
                 ft.TextButton("إغلاق", on_click=close_card_dialog)
             ]
             
