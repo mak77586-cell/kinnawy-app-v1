@@ -8,7 +8,7 @@ from pypdf import PdfReader
 import io
 import flet as ft
 
-# لاستدعاء نافذة ملفات النظام وحافظة النسخ المباشرة على الويندوز
+# لاستدعاء نافذة ملفات النظام على الويندوز
 try:
     import tkinter as tk
     from tkinter import filedialog
@@ -262,14 +262,41 @@ def main(page: ft.Page):
         ]
     )
 
-    # 4. اختيار ملف الـ PDF المباشر والسريع
+    # 4. اختيار ملف الـ PDF المتوافق مع الكمبيوتر والموبايل
     category_dropdown = ft.Dropdown(
         label="اختر الفئة المستهدفة للرفع",
         options=[ft.dropdown.Option(cat) for cat in CATEGORY_PRICES.keys()],
         width=250
     )
 
-    def select_file_desktop(e):
+    def on_mobile_file_picked(e: ft.FilePickerResultEvent):
+        if e.files and len(e.files) > 0:
+            file_info = e.files[0]
+            cat = category_dropdown.value
+            if not cat:
+                admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
+                admin_status_msg.color = ft.Colors.RED_400
+                page.update()
+                return
+            
+            if file_info.bytes:
+                added = import_cards_from_pdf_bytes(file_info.bytes, cat)
+                admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح إلى فئة {cat}!"
+                admin_status_msg.color = ft.Colors.GREEN_400
+                refresh_packages()
+            else:
+                admin_status_msg.value = "❌ تعذر قراءة الملف على الجهاز."
+                admin_status_msg.color = ft.Colors.RED_400
+            page.update()
+        else:
+            admin_status_msg.value = "⚠️ لم يتم اختيار أي ملف."
+            admin_status_msg.color = ft.Colors.ORANGE_400
+            page.update()
+
+    mobile_file_picker = ft.FilePicker(on_result=on_mobile_file_picked)
+    page.overlay.append(mobile_file_picker)
+
+    def trigger_file_selection(e):
         cat = category_dropdown.value
         if not cat:
             admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
@@ -277,8 +304,9 @@ def main(page: ft.Page):
             page.update()
             return
 
-        file_path = None
-        if HAS_TK:
+        # إذا كنا على الكمبيوتر ونتوفر على Tkinter
+        if HAS_TK and page.platform not in [ft.PagePlatform.ANDROID, ft.PagePlatform.IOS]:
+            file_path = None
             root = tk.Tk()
             root.withdraw()
             root.attributes('-topmost', True)
@@ -288,21 +316,34 @@ def main(page: ft.Page):
             )
             root.destroy()
 
-        if file_path:
-            try:
-                with open(file_path, "rb") as f:
-                    file_bytes = f.read()
-                added = import_cards_from_pdf_bytes(file_bytes, cat)
-                admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح إلى فئة {cat}!"
-                admin_status_msg.color = ft.Colors.GREEN_400
-                refresh_packages()
-            except Exception as ex:
-                admin_status_msg.value = f"❌ خطأ أثناء قراءة الملف: {ex}"
-                admin_status_msg.color = ft.Colors.RED_400
+            if file_path:
+                try:
+                    with open(file_path, "rb") as f:
+                        file_bytes = f.read()
+                    added = import_cards_from_pdf_bytes(file_bytes, cat)
+                    admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح إلى فئة {cat}!"
+                    admin_status_msg.color = ft.Colors.GREEN_400
+                    refresh_packages()
+                except Exception as ex:
+                    admin_status_msg.value = f"❌ خطأ أثناء قراءة الملف: {ex}"
+                    admin_status_msg.color = ft.Colors.RED_400
+            else:
+                admin_status_msg.value = "⚠️ لم يتم اختيار أي ملف."
+                admin_status_msg.color = ft.Colors.ORANGE_400
+            page.update()
         else:
-            admin_status_msg.value = "⚠️ لم يتم اختيار أي ملف."
-            admin_status_msg.color = ft.Colors.ORANGE_400
-        page.update()
+            # للموبايل (أندرويد / آي أو إس) نستخدم FilePicker الخاص بـ Flet
+            try:
+                mobile_file_picker.pick_files(
+                    allow_multiple=False,
+                    allowed_extensions=["pdf"],
+                    file_type=ft.FilePickerFileType.CUSTOM,
+                    with_data=True
+                )
+            except Exception as ex:
+                admin_status_msg.value = f"⚠️ خطأ في فتح مستعرض الملفات: {ex}"
+                admin_status_msg.color = ft.Colors.RED_400
+                page.update()
 
     admin_dialog = ft.AlertDialog(
         title=ft.Text("⚙️ لوحة تحكم المشرف - رفع بطاقات PDF"),
@@ -311,7 +352,7 @@ def main(page: ft.Page):
             category_dropdown,
             ft.FilledButton(
                 "📁 اختيار ملف PDF ورفع", 
-                on_click=select_file_desktop
+                on_click=trigger_file_selection
             ),
             admin_status_msg,
         ], tight=True, spacing=15),
@@ -367,7 +408,7 @@ def main(page: ft.Page):
         login_dialog.open = True
         page.update()
 
-    # 6. منطق شراء الباقات مع حل مشاكل النسخ والتحقق المباشر من المخزون
+    # 6. منطق شراء الباقات مع ميزات النسخ والمشاركة وحذف البطاقة المباعة
     def buy_package(cat_name, price):
         bal = get_user_balance()
         
@@ -377,13 +418,11 @@ def main(page: ft.Page):
 
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        # جلب أول بطاقة متاحة مباشرة
         cursor.execute("SELECT id, username, password FROM cards WHERE category = ? LIMIT 1", (cat_name,))
         card = cursor.fetchone()
 
         if card:
             card_id, card_user, card_pass = card
-            # خصم الرصيد وحذف البطاقة المباعة نهائياً من قاعدة البيانات لعدم تكرارها
             cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (price, USER_ID))
             cursor.execute("DELETE FROM cards WHERE id = ?", (card_id,))
             conn.commit()
@@ -392,7 +431,6 @@ def main(page: ft.Page):
             new_bal = get_user_balance()
             balance_text.value = f"الرصيد: {new_bal:,.0f} ل.س"
             
-            # نص البطاقة للنسخ والمشاركة
             card_details_text = f"📦 الفئة: {cat_name}\n👤 اسم المستخدم: {card_user}\n🔑 كلمة المرور: {card_pass}\n💰 الرصيد المتبقي: {new_bal:,.0f} ل.س\nشكراً لاستخدامك متجر syria net ❤️"
 
             def copy_info(e):
@@ -412,7 +450,6 @@ def main(page: ft.Page):
                 url = f"https://api.whatsapp.com/send?text={encoded_msg}"
                 page.launch_url(url)
 
-            # ضبط محتوى نافذة النجاح مع الألوان الواضحة وأزرار النسخ والمشاركة الآمنة
             card_dialog.title = ft.Text("✅ تم الشراء بنجاح!")
             card_dialog.content = ft.Column([
                 ft.Text(f"📦 الفئة: {cat_name}", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK),
@@ -443,7 +480,6 @@ def main(page: ft.Page):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         for cat, price in CATEGORY_PRICES.items():
-            # حساب العدد الفعلي المتبقي في الجدول
             cursor.execute("SELECT COUNT(*) FROM cards WHERE category = ?", (cat,))
             available_count = cursor.fetchone()[0]
             
