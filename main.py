@@ -146,7 +146,7 @@ def main(page: ft.Page):
     page.padding = 15
     page.scroll = ft.ScrollMode.AUTO
 
-    # تعريف خدمات Flet الحديثة (بدون وضعها في page.overlay نهائياً لمنع الشريط الأحمر)
+    # تعريف خدمات Flet الحديثة
     file_picker = ft.FilePicker()
     clipboard = ft.Clipboard()
     url_launcher = ft.UrlLauncher()
@@ -168,31 +168,29 @@ def main(page: ft.Page):
     admin_status_msg = ft.Text("", size=14)
     login_status_msg = ft.Text("", size=14, color="#EF5350")
 
-    # دوال إغلاق النوافذ المنبثقة
-    def close_alert_dialog(e):
+    # دوال إغلاق النوافذ المنبثقة ومزامنة حالتها
+    def close_alert_dialog(e=None):
         alert_dialog.open = False
         page.update()
 
-    def close_card_dialog(e):
+    def close_card_dialog(e=None):
         card_dialog.open = False
         page.update()
 
-    def close_deposit_dialog(e):
+    def close_deposit_dialog(e=None):
         deposit_dialog.open = False
         page.update()
 
-    def close_login_dialog(e):
-        login_dialog.open = False
-        page.update()
-
-    def close_admin_dialog(e):
+    def close_admin_dialog(e=None):
         admin_dialog.open = False
         page.update()
 
     alert_dialog = ft.AlertDialog(
+        modal=True,
         title=ft.Text("تنبيه"),
         content=ft.Text("", size=15),
-        actions=[ft.TextButton("حسناً", on_click=close_alert_dialog)]
+        actions=[ft.TextButton("حسناً", on_click=close_alert_dialog)],
+        on_dismiss=close_alert_dialog
     )
 
     def show_alert(title, text):
@@ -202,9 +200,11 @@ def main(page: ft.Page):
         page.update()
 
     card_dialog = ft.AlertDialog(
+        modal=True,
         title=ft.Text("✅ تم الشراء بنجاح!"),
         content=ft.Text("جاري التحميل..."),
-        actions=[ft.TextButton("إغلاق", on_click=close_card_dialog)]
+        actions=[ft.TextButton("إغلاق", on_click=close_card_dialog)],
+        on_dismiss=close_card_dialog
     )
 
     # 1. واجهة الشحن عبر شام كاش
@@ -253,6 +253,7 @@ def main(page: ft.Page):
         page.update()
 
     deposit_dialog = ft.AlertDialog(
+        modal=True,
         title=ft.Text("➕ شحن الرصيد عبر شام كاش"),
         content=ft.Column([
             ft.Text("رقم محفظتنا للاستلام:"),
@@ -268,10 +269,14 @@ def main(page: ft.Page):
         actions=[
             ft.TextButton("إلغاء", on_click=close_deposit_dialog),
             ft.FilledButton("تأكيد الشحن", on_click=handle_deposit),
-        ]
+        ],
+        on_dismiss=close_deposit_dialog
     )
 
-    # 2. اختيار ملف الـ PDF بالطريقة الحديثة المتوافقة مع Flet 0.80+ على الموبايل والكمبيوتر
+    # 2. نافذة المشرف الموحدة (تسجيل الدخول + رفع ملف PDF في نفس النافذة لمنع تداخل النوافذ)
+    admin_user_input = ft.TextField(label="اسم المستخدم", value="admin")
+    admin_pass_input = ft.TextField(label="كلمة المرور", password=True, can_reveal_password=True)
+
     category_dropdown = ft.Dropdown(
         label="اختر الفئة المستهدفة للرفع",
         options=[ft.dropdown.Option(cat) for cat in CATEGORY_PRICES.keys()],
@@ -301,7 +306,6 @@ def main(page: ft.Page):
                 file_info = files[0]
                 file_bytes = file_info.bytes
 
-                # احتياطياً إذا أعاد النظام مسار الملف بدلاً من البايتات
                 if not file_bytes and getattr(file_info, "path", None):
                     with open(file_info.path, "rb") as f:
                         file_bytes = f.read()
@@ -323,54 +327,51 @@ def main(page: ft.Page):
 
         page.update()
 
-    admin_dialog = ft.AlertDialog(
-        title=ft.Text("⚙️ لوحة تحكم المشرف - رفع بطاقات PDF"),
-        content=ft.Column([
-            ft.Text("اختر الفئة ثم اضغط لاختيار ملف الـ PDF من جهازك:"),
-            category_dropdown,
-            ft.FilledButton(
-                "📁 اختيار ملف PDF ورفع",
-                on_click=trigger_file_selection
-            ),
-            admin_status_msg,
-        ], tight=True, spacing=15),
-        actions=[
-            ft.TextButton("إغلاق", on_click=close_admin_dialog),
-        ]
-    )
+    login_view_content = ft.Column([
+        admin_user_input,
+        admin_pass_input,
+        login_status_msg
+    ], tight=True, spacing=10)
 
-    # 3. نافذة تسجيل دخول المشرف
-    admin_user_input = ft.TextField(label="اسم المستخدم", value="admin")
-    admin_pass_input = ft.TextField(label="كلمة المرور", password=True, can_reveal_password=True)
+    upload_view_content = ft.Column([
+        ft.Text("اختر الفئة ثم اضغط لاختيار ملف الـ PDF من جهازك:"),
+        category_dropdown,
+        ft.FilledButton(
+            "📁 اختيار ملف PDF ورفع",
+            on_click=trigger_file_selection
+        ),
+        admin_status_msg,
+    ], tight=True, spacing=15)
 
     def check_admin_login(e):
         if admin_user_input.value == ADMIN_USER and admin_pass_input.value == ADMIN_PASS:
-            login_dialog.open = False
+            # تبديل محتوى نفس النافذة إلى لوحة رفع البطاقات دون فتح نافذة ثانية
             admin_status_msg.value = ""
-            admin_dialog.open = True
+            admin_dialog.title = ft.Text("⚙️ لوحة تحكم المشرف - رفع بطاقات PDF")
+            admin_dialog.content = upload_view_content
+            admin_dialog.actions = [
+                ft.TextButton("إغلاق", on_click=close_admin_dialog),
+            ]
             page.update()
         else:
             login_status_msg.value = "❌ اسم المستخدم أو كلمة المرور غير صحيحة!"
             page.update()
 
-    login_dialog = ft.AlertDialog(
+    admin_dialog = ft.AlertDialog(
+        modal=True,
         title=ft.Text("🔒 تسجيل دخول المشرف"),
-        content=ft.Column([
-            admin_user_input,
-            admin_pass_input,
-            login_status_msg
-        ], tight=True, spacing=10),
+        content=login_view_content,
         actions=[
-            ft.TextButton("إلغاء", on_click=close_login_dialog),
+            ft.TextButton("إلغاء", on_click=close_admin_dialog),
             ft.FilledButton("دخول", on_click=check_admin_login)
-        ]
+        ],
+        on_dismiss=close_admin_dialog
     )
 
-    # إضافة النوافذ الحوارية فقط إلى الـ overlay
+    # إضافة النوافذ الحوارية إلى الـ overlay
     page.overlay.append(deposit_dialog)
     page.overlay.append(card_dialog)
     page.overlay.append(admin_dialog)
-    page.overlay.append(login_dialog)
     page.overlay.append(alert_dialog)
     
     page.update()
@@ -383,10 +384,16 @@ def main(page: ft.Page):
     def open_admin(e):
         login_status_msg.value = ""
         admin_pass_input.value = ""
-        login_dialog.open = True
+        admin_dialog.title = ft.Text("🔒 تسجيل دخول المشرف")
+        admin_dialog.content = login_view_content
+        admin_dialog.actions = [
+            ft.TextButton("إلغاء", on_click=close_admin_dialog),
+            ft.FilledButton("دخول", on_click=check_admin_login)
+        ]
+        admin_dialog.open = True
         page.update()
 
-    # 4. منطق شراء الباقات مع النسخ والمشاركة وحذف البطاقة المباعة
+    # 3. منطق شراء الباقات مع النسخ والمشاركة وحذف البطاقة المباعة
     def buy_package(cat_name, price):
         bal = get_user_balance()
         
@@ -417,12 +424,15 @@ def main(page: ft.Page):
                 f"شكراً لاستخدامك متجر syria net ❤️"
             )
 
+            copy_feedback = ft.Text("", size=13, color="#66BB6A", weight=ft.FontWeight.BOLD)
+
             async def copy_info(e):
                 try:
                     await clipboard.set(card_details_text)
-                    show_alert("تم النسخ", "✅ تم نسخ بيانات البطاقة إلى الحافظة بنجاح!")
+                    copy_feedback.value = "✅ تم نسخ بيانات البطاقة إلى الحافظة!"
                 except Exception:
-                    show_alert("نسخ", "يمكنك الضغط مطولاً على الرقم لنسخه يدوياً.")
+                    copy_feedback.value = "⚠️ اضغط مطولاً على الرقم لنسخه يدوياً."
+                page.update()
 
             async def share_whatsapp(e):
                 encoded_msg = urllib.parse.quote(f"تفاصيل بطاقة إنترنت من SYRIA NET:\n{card_details_text}")
@@ -439,6 +449,7 @@ def main(page: ft.Page):
                 ft.Text(f"🔑 كلمة المرور: {card_pass}", size=16, weight=ft.FontWeight.BOLD, color="#F44336", selectable=True),
                 ft.Divider(),
                 ft.Text(f"💰 رصيدك المتبقي: {new_bal:,.0f} ل.س", size=16, weight=ft.FontWeight.BOLD, color="#4CAF50"),
+                copy_feedback,
                 ft.Text("شكراً لاستخدامك متجر syria net ❤️", size=12, color="#9E9E9E")
             ], tight=True, spacing=10)
             
