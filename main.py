@@ -262,39 +262,41 @@ def main(page: ft.Page):
         ]
     )
 
-    # 4. اختيار ملف الـ PDF المتوافق مع الكمبيوتر والموبايل
+    # 4. اختيار ملف الـ PDF (يُنشئ FilePicker للموبايل فقط ويترك الكمبيوتر نظيفاً)
     category_dropdown = ft.Dropdown(
         label="اختر الفئة المستهدفة للرفع",
         options=[ft.dropdown.Option(cat) for cat in CATEGORY_PRICES.keys()],
         width=250
     )
 
-    def on_mobile_file_picked(e: ft.FilePickerResultEvent):
-        if e.files and len(e.files) > 0:
-            file_info = e.files[0]
-            cat = category_dropdown.value
-            if not cat:
-                admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
-                admin_status_msg.color = ft.Colors.RED_400
+    mobile_file_picker = None
+    if not HAS_TK:
+        def on_mobile_file_picked(e: ft.FilePickerResultEvent):
+            if e.files and len(e.files) > 0:
+                file_info = e.files[0]
+                cat = category_dropdown.value
+                if not cat:
+                    admin_status_msg.value = "⚠️ يرجى اختيار الفئة أولاً من القائمة!"
+                    admin_status_msg.color = ft.Colors.RED_400
+                    page.update()
+                    return
+                
+                if file_info.bytes:
+                    added = import_cards_from_pdf_bytes(file_info.bytes, cat)
+                    admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح إلى فئة {cat}!"
+                    admin_status_msg.color = ft.Colors.GREEN_400
+                    refresh_packages()
+                else:
+                    admin_status_msg.value = "❌ تعذر قراءة الملف على الجهاز."
+                    admin_status_msg.color = ft.Colors.RED_400
                 page.update()
-                return
-            
-            if file_info.bytes:
-                added = import_cards_from_pdf_bytes(file_info.bytes, cat)
-                admin_status_msg.value = f"✅ تمت إضافة {added} بطاقة بنجاح إلى فئة {cat}!"
-                admin_status_msg.color = ft.Colors.GREEN_400
-                refresh_packages()
             else:
-                admin_status_msg.value = "❌ تعذر قراءة الملف على الجهاز."
-                admin_status_msg.color = ft.Colors.RED_400
-            page.update()
-        else:
-            admin_status_msg.value = "⚠️ لم يتم اختيار أي ملف."
-            admin_status_msg.color = ft.Colors.ORANGE_400
-            page.update()
+                admin_status_msg.value = "⚠️ لم يتم اختيار أي ملف."
+                admin_status_msg.color = ft.Colors.ORANGE_400
+                page.update()
 
-    mobile_file_picker = ft.FilePicker(on_result=on_mobile_file_picked)
-    page.overlay.append(mobile_file_picker)
+        mobile_file_picker = ft.FilePicker(on_result=on_mobile_file_picked)
+        page.overlay.append(mobile_file_picker)
 
     def trigger_file_selection(e):
         cat = category_dropdown.value
@@ -304,8 +306,8 @@ def main(page: ft.Page):
             page.update()
             return
 
-        # إذا كنا على الكمبيوتر ونتوفر على Tkinter
-        if HAS_TK and page.platform not in [ft.PagePlatform.ANDROID, ft.PagePlatform.IOS]:
+        # على الكمبيوتر (Windows) نستخدم Tkinter المباشر بدون أي FilePicker
+        if HAS_TK:
             file_path = None
             root = tk.Tk()
             root.withdraw()
@@ -332,18 +334,19 @@ def main(page: ft.Page):
                 admin_status_msg.color = ft.Colors.ORANGE_400
             page.update()
         else:
-            # للموبايل (أندرويد / آي أو إس) نستخدم FilePicker الخاص بـ Flet
-            try:
-                mobile_file_picker.pick_files(
-                    allow_multiple=False,
-                    allowed_extensions=["pdf"],
-                    file_type=ft.FilePickerFileType.CUSTOM,
-                    with_data=True
-                )
-            except Exception as ex:
-                admin_status_msg.value = f"⚠️ خطأ في فتح مستعرض الملفات: {ex}"
-                admin_status_msg.color = ft.Colors.RED_400
-                page.update()
+            # على الموبايل نستخدم FilePicker الخاص بـ Flet
+            if mobile_file_picker:
+                try:
+                    mobile_file_picker.pick_files(
+                        allow_multiple=False,
+                        allowed_extensions=["pdf"],
+                        file_type=ft.FilePickerFileType.CUSTOM,
+                        with_data=True
+                    )
+                except Exception as ex:
+                    admin_status_msg.value = f"⚠️ خطأ في فتح مستعرض الملفات: {ex}"
+                    admin_status_msg.color = ft.Colors.RED_400
+                    page.update()
 
     admin_dialog = ft.AlertDialog(
         title=ft.Text("⚙️ لوحة تحكم المشرف - رفع بطاقات PDF"),
@@ -388,7 +391,7 @@ def main(page: ft.Page):
         ]
     )
 
-    # إضافة النوافذ المرئية إلى الـ overlay
+    # إضافة النوافذ الأساسية إلى الـ overlay فقط (بدون إضافة FilePicker للكمبيوتر لتجنب الشريط الأحمر)
     page.overlay.append(deposit_dialog)
     page.overlay.append(card_dialog)
     page.overlay.append(admin_dialog)
